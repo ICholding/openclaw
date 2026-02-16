@@ -1,0 +1,128 @@
+version: "3.8"
+
+services:
+  # OpenClaw Gateway Service
+  openclaw-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.full
+      target: production
+    image: openclaw:full
+    container_name: openclaw-gateway
+    hostname: openclaw-gateway
+    restart: unless-stopped
+    
+    environment:
+      - NODE_ENV=production
+      - HOME=/home/openclaw
+      - TERM=xterm-256color
+      - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN}
+      - OPENCLAW_GATEWAY_BIND=${OPENCLAW_GATEWAY_BIND:-lan}
+      - OPENCLAW_GATEWAY_PORT=${OPENCLAW_GATEWAY_PORT:-18789}
+      - CLAUDE_AI_SESSION_KEY=${CLAUDE_AI_SESSION_KEY:-}
+      - CLAUDE_WEB_SESSION_KEY=${CLAUDE_WEB_SESSION_KEY:-}
+      - CLAUDE_WEB_COOKIE=${CLAUDE_WEB_COOKIE:-}
+      # Channel configs
+      - WHATSAPP_ENABLED=${WHATSAPP_ENABLED:-true}
+      - TELEGRAM_ENABLED=${TELEGRAM_ENABLED:-false}
+      - DISCORD_ENABLED=${DISCORD_ENABLED:-false}
+      - SLACK_ENABLED=${SLACK_ENABLED:-false}
+      # AI Provider configs
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - GOOGLE_AI_API_KEY=${GOOGLE_AI_API_KEY:-}
+      
+    volumes:
+      # Config persistence
+      - openclaw-config:/home/openclaw/.openclaw
+      - openclaw-workspace:/home/openclaw/.openclaw/workspace
+      # Optional: Mount custom skills
+      - ./skills:/app/skills:ro
+      # Optional: Mount custom extensions
+      - ./extensions:/app/extensions:ro
+      
+    ports:
+      - "${OPENCLAW_GATEWAY_PORT:-18789}:18789"
+      - "${OPENCLAW_BRIDGE_PORT:-18790}:18790"
+      - "${OPENCLAW_CANVAS_PORT:-18793}:18793"
+      
+    networks:
+      - openclaw-network
+      
+    healthcheck:
+      test: ["CMD", "node", "dist/index.js", "health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+      
+    command: >
+      node openclaw.mjs gateway 
+      --bind ${OPENCLAW_GATEWAY_BIND:-lan} 
+      --port 18789 
+      --allow-unconfigured
+
+  # OpenClaw CLI Service (for management)
+  openclaw-cli:
+    image: openclaw:full
+    container_name: openclaw-cli
+    depends_on:
+      openclaw-gateway:
+        condition: service_healthy
+    environment:
+      - HOME=/home/openclaw
+      - TERM=xterm-256color
+      - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN}
+      - OPENCLAW_GATEWAY_URL=http://openclaw-gateway:18789
+    volumes:
+      - openclaw-config:/home/openclaw/.openclaw
+      - openclaw-workspace:/home/openclaw/.openclaw/workspace
+    networks:
+      - openclaw-network
+    profiles:
+      - cli
+    stdin_open: true
+    tty: true
+    entrypoint: ["node", "dist/index.js"]
+
+  # Optional: Vector Database for memory
+  openclaw-vectordb:
+    image: ankane/pgvector:latest
+    container_name: openclaw-vectordb
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: openclaw
+      POSTGRES_PASSWORD: ${VECTORDB_PASSWORD:-openclaw}
+      POSTGRES_DB: openclaw_memory
+    volumes:
+      - vectordb-data:/var/lib/postgresql/data
+    networks:
+      - openclaw-network
+    profiles:
+      - vectordb
+
+  # Optional: Redis for caching
+  openclaw-redis:
+    image: redis:7-alpine
+    container_name: openclaw-redis
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    networks:
+      - openclaw-network
+    profiles:
+      - redis
+
+networks:
+  openclaw-network:
+    driver: bridge
+
+volumes:
+  openclaw-config:
+    driver: local
+  openclaw-workspace:
+    driver: local
+  vectordb-data:
+    driver: local
+  redis-data:
+    driver: local
